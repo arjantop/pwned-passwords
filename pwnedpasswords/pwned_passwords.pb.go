@@ -112,8 +112,9 @@ var _ grpc.ClientConn
 // is compatible with the grpc package it is being compiled against.
 const _ = grpc.SupportPackageIsVersion4
 
-// Client API for PwnedPasswords service
-
+// PwnedPasswordsClient is the client API for PwnedPasswords service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://godoc.org/google.golang.org/grpc#ClientConn.NewStream.
 type PwnedPasswordsClient interface {
 	ListHashesForPrefix(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (PwnedPasswords_ListHashesForPrefixClient, error)
 }
@@ -127,7 +128,7 @@ func NewPwnedPasswordsClient(cc *grpc.ClientConn) PwnedPasswordsClient {
 }
 
 func (c *pwnedPasswordsClient) ListHashesForPrefix(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (PwnedPasswords_ListHashesForPrefixClient, error) {
-	stream, err := grpc.NewClientStream(ctx, &_PwnedPasswords_serviceDesc.Streams[0], c.cc, "/pwnedpasswords.PwnedPasswords/ListHashesForPrefix", opts...)
+	stream, err := c.cc.NewStream(ctx, &_PwnedPasswords_serviceDesc.Streams[0], "/pwnedpasswords.PwnedPasswords/ListHashesForPrefix", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -158,8 +159,7 @@ func (x *pwnedPasswordsListHashesForPrefixClient) Recv() (*PasswordHash, error) 
 	return m, nil
 }
 
-// Server API for PwnedPasswords service
-
+// PwnedPasswordsServer is the server API for PwnedPasswords service.
 type PwnedPasswordsServer interface {
 	ListHashesForPrefix(*ListRequest, PwnedPasswords_ListHashesForPrefixServer) error
 }

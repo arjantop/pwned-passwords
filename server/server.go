@@ -12,14 +12,22 @@ import (
 
 	"github.com/arjantop/pwned-passwords/internal/filename"
 	"github.com/arjantop/pwned-passwords/pwnedpasswords"
+	"go.opencensus.io/exporter/stackdriver"
+	"go.opencensus.io/plugin/ocgrpc"
+	"go.opencensus.io/stats/view"
+	"go.opencensus.io/trace"
+	"go.opencensus.io/zpages"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"net/http"
+	_ "net/http/pprof"
 )
 
 var (
-	listenOn = flag.String("listen", "", "Interface and port the server will listen on")
-	dataDir  = flag.String("dataDir", "", "Directory where password data is located")
+	listenOn     = flag.String("listen", "", "Interface and port the server will listen on")
+	dataDir      = flag.String("dataDir", "", "Directory where password data is located")
+	gcpProjectId = flag.String("gcpProjectId", "", "Google Cloud project id")
 )
 
 type Storage interface {
@@ -31,6 +39,9 @@ type LocalStorage struct {
 }
 
 func (s *LocalStorage) Get(ctx context.Context, key string) ([][]byte, error) {
+	ctx, span := trace.StartSpan(ctx, "LocalStorage.Get")
+	defer span.End()
+
 	filePath := filename.PathFor(key, ".bin")
 
 	buf, err := ioutil.ReadFile(path.Join(s.dir, filePath))
@@ -84,9 +95,33 @@ func main() {
 		os.Exit(1)
 	}
 
+	go func() {
+		http.Handle("/debug/", http.StripPrefix("/debug", zpages.Handler))
+		log.Fatal(http.ListenAndServe(":6060", nil))
+	}()
+
+	if *gcpProjectId != "" {
+		// TODO: Flush on shutdown
+		log.Println("Initializing stackdriver exporter ...")
+		exporter, err := stackdriver.NewExporter(stackdriver.Options{ProjectID: *gcpProjectId})
+		if err != nil {
+			log.Fatalf("Could not initialize stackdriver exporter: %s", err)
+		}
+
+		view.RegisterExporter(exporter)
+		trace.RegisterExporter(exporter)
+	}
+
+	// For demo purposes
+	trace.ApplyConfig(trace.Config{DefaultSampler: trace.AlwaysSample()})
+
+	if err := view.Register(ocgrpc.DefaultServerViews...); err != nil {
+		log.Fatalf("Could not register views: %s", err)
+	}
+
 	lis, err := net.Listen("tcp", *listenOn)
 	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
+		log.Fatalf("Failed to listen: %v", err)
 	}
 
 	s := &Server{
@@ -94,7 +129,7 @@ func main() {
 	}
 
 	log.Println("Starting server ...")
-	srv := grpc.NewServer()
+	srv := grpc.NewServer(grpc.StatsHandler(&ocgrpc.ServerHandler{}))
 	pwnedpasswords.RegisterPwnedPasswordsServer(srv, s)
 
 	c := make(chan os.Signal, 1)

@@ -10,9 +10,13 @@ import (
 	"os/signal"
 	"path"
 
+	"net/http"
+	_ "net/http/pprof"
+
 	"github.com/arjantop/pwned-passwords/internal/filename"
 	"github.com/arjantop/pwned-passwords/pwnedpasswords"
-	"go.opencensus.io/exporter/stackdriver"
+	"go.opencensus.io/exporter/jaeger"
+	"go.opencensus.io/exporter/prometheus"
 	"go.opencensus.io/plugin/ocgrpc"
 	"go.opencensus.io/stats/view"
 	"go.opencensus.io/trace"
@@ -20,14 +24,12 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"net/http"
-	_ "net/http/pprof"
 )
 
 var (
-	listenOn     = flag.String("listen", "", "Interface and port the server will listen on")
-	dataDir      = flag.String("dataDir", "", "Directory where password data is located")
-	gcpProjectId = flag.String("gcpProjectId", "", "Google Cloud project id")
+	listenOn       = flag.String("listen", "", "Interface and port the server will listen on")
+	dataDir        = flag.String("dataDir", "", "Directory where password data is located")
+	jaegerEndpoint = flag.String("jaegerEndpoint", "", "Endpoint of jaeger tracing")
 )
 
 type Storage interface {
@@ -77,7 +79,7 @@ func (s *Server) ListHashesForPrefix(req *pwnedpasswords.ListRequest, resp pwned
 
 	for _, h := range hashes {
 		err := resp.Send(&pwnedpasswords.PasswordHash{
-			HashSuffix: h,
+			HashSuffix: h[prefixLength/2:],
 		})
 		if err != nil {
 			return err
@@ -100,17 +102,25 @@ func main() {
 		log.Fatal(http.ListenAndServe(":6060", nil))
 	}()
 
-	if *gcpProjectId != "" {
-		// TODO: Flush on shutdown
-		log.Println("Initializing stackdriver exporter ...")
-		exporter, err := stackdriver.NewExporter(stackdriver.Options{ProjectID: *gcpProjectId})
-		if err != nil {
-			log.Fatalf("Could not initialize stackdriver exporter: %s", err)
-		}
-
-		view.RegisterExporter(exporter)
-		trace.RegisterExporter(exporter)
+	exporter, err := jaeger.NewExporter(jaeger.Options{
+		AgentEndpoint: *jaegerEndpoint,
+		ServiceName:   "pwned-passwords",
+	})
+	if err != nil {
+		log.Fatalf("Could not initialize jaeger exporter: %s", err)
 	}
+	trace.RegisterExporter(exporter)
+
+	pExporter, err := prometheus.NewExporter(prometheus.Options{})
+	if err != nil {
+		log.Fatalf("Could not initialize prometheus exporter: %s", err)
+	}
+	view.RegisterExporter(pExporter)
+
+	go func() {
+		http.Handle("/metrics", pExporter)
+		log.Fatal(http.ListenAndServe(":9999", nil))
+	}()
 
 	// For demo purposes
 	trace.ApplyConfig(trace.Config{DefaultSampler: trace.AlwaysSample()})

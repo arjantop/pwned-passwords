@@ -1,0 +1,32 @@
+version: '3'
+services:
+  jaegertracing:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - '6831:6831/udp'
+      - '5778:5778'
+      - '16686:16686'
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - 9090:9090
+    volumes:
+      - ${PWD}/docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+  push-gateway:
+    image: prom/pushgateway:latest
+    ports:
+      - 9091:9091
+  pwned-passwords:
+    build: .
+    command:
+      - -dataDir=/data
+      - -listen=:8989
+      - -jaegerEndpoint=jaegertracing:6831
+    depends_on:
+      - jaegertracing
+      - prometheus
+    ports:
+      - '9999:9999'
+      - '8989:8989'
+    volumes:
+      - ${DATA_DIR}:/data:ro,cached

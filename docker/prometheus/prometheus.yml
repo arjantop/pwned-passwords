@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 15s
+  external_labels:
+    monitor: 'main'
+scrape_configs:
+  - job_name: 'pwned-passwords'
+    static_configs:
+      - targets: ['pwned-passwords:9999']
+  - job_name: 'push-gateway'
+    static_configs:
+      - targets: ['push-gateway:9091']

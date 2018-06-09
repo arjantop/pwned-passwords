@@ -6,6 +6,7 @@ import (
 
 	"time"
 
+	"github.com/hashicorp/go-multierror"
 	prom "github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"go.opencensus.io/exporter/jaeger"
@@ -19,9 +20,13 @@ type FlushFunc func() error
 
 func CombineFlushFunc(flushFuncs ...FlushFunc) FlushFunc {
 	return func() error {
+		var result *multierror.Error
 		for _, flushFunc := range flushFuncs {
-			flushFunc()
+			if err := flushFunc(); err != nil {
+				multierror.Append(result, err)
+			}
 		}
+		return result.ErrorOrNil()
 	}
 }
 

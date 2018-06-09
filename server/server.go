@@ -1,22 +1,19 @@
 package main
 
 import (
-	"context"
 	"flag"
-	"io/ioutil"
 	"log"
 	"net"
 	"os"
 	"os/signal"
-	"path"
 
 	"net/http"
 	_ "net/http/pprof"
 
 	"fmt"
 
-	"github.com/arjantop/pwned-passwords/internal/filename"
 	"github.com/arjantop/pwned-passwords/internal/monitoring"
+	"github.com/arjantop/pwned-passwords/internal/storage"
 	"github.com/arjantop/pwned-passwords/pwnedpasswords"
 	"go.opencensus.io/plugin/ocgrpc"
 	"go.opencensus.io/stats/view"
@@ -33,39 +30,10 @@ var (
 	jaegerEndpoint = flag.String("jaegerEndpoint", "", "Endpoint of jaeger tracing")
 )
 
-type Storage interface {
-	Get(ctx context.Context, key string) ([][]byte, error)
-}
-
-type LocalStorage struct {
-	dir string
-}
-
-func (s *LocalStorage) Get(ctx context.Context, key string) ([][]byte, error) {
-	ctx, span := trace.StartSpan(ctx, "LocalStorage.Get")
-	defer span.End()
-
-	filePath := filename.PathFor(key, ".bin")
-
-	buf, err := ioutil.ReadFile(path.Join(s.dir, filePath))
-	if err != nil {
-		return nil, err
-	}
-
-	numHashes := len(buf) / 20
-	hashes := make([][]byte, 0, numHashes)
-
-	for i := 0; i < numHashes; i++ {
-		hashes = append(hashes, buf[i*20:(i+1)*20])
-	}
-
-	return hashes, err
-}
-
 const prefixLength = 5
 
 type Server struct {
-	storage Storage
+	storage storage.Storage
 }
 
 func (s *Server) ListHashesForPrefix(req *pwnedpasswords.ListRequest, resp pwnedpasswords.PwnedPasswords_ListHashesForPrefixServer) error {
@@ -193,7 +161,7 @@ func main() {
 
 	s := NewGrpcServer(*listenOn, "pwned-passwords", func(srv *grpc.Server) {
 		s := &Server{
-			storage: &LocalStorage{dir: *dataDir},
+			storage: &storage.Local{Dir: *dataDir},
 		}
 		pwnedpasswords.RegisterPwnedPasswordsServer(srv, s)
 	})

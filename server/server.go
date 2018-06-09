@@ -13,10 +13,11 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 
+	"fmt"
+
 	"github.com/arjantop/pwned-passwords/internal/filename"
+	"github.com/arjantop/pwned-passwords/internal/monitoring"
 	"github.com/arjantop/pwned-passwords/pwnedpasswords"
-	"go.opencensus.io/exporter/jaeger"
-	"go.opencensus.io/exporter/prometheus"
 	"go.opencensus.io/plugin/ocgrpc"
 	"go.opencensus.io/stats/view"
 	"go.opencensus.io/trace"
@@ -89,58 +90,39 @@ func (s *Server) ListHashesForPrefix(req *pwnedpasswords.ListRequest, resp pwned
 	return nil
 }
 
-func main() {
-	flag.Parse()
+type GrpcServer struct {
+	listenOn string
+	name     string
+	init     func(server *grpc.Server)
+	flusher  monitoring.FlushFunc
 
-	if *listenOn == "" || *dataDir == "" {
-		flag.Usage()
-		os.Exit(1)
+	started bool
+}
+
+func NewGrpcServer(listenOn string, name string, init func(server *grpc.Server)) *GrpcServer {
+	return &GrpcServer{
+		listenOn: listenOn,
+		name:     name,
+		init:     init,
+	}
+}
+
+func (s *GrpcServer) Start() error {
+	http.Handle("/debug/", http.StripPrefix("/debug", zpages.Handler))
+
+	if err := s.setUpMonitoring(); err != nil {
+		return err
 	}
 
-	go func() {
-		http.Handle("/debug/", http.StripPrefix("/debug", zpages.Handler))
-		log.Fatal(http.ListenAndServe(":6060", nil))
-	}()
-
-	exporter, err := jaeger.NewExporter(jaeger.Options{
-		AgentEndpoint: *jaegerEndpoint,
-		ServiceName:   "pwned-passwords",
-	})
+	lis, err := net.Listen("tcp", s.listenOn)
 	if err != nil {
-		log.Fatalf("Could not initialize jaeger exporter: %s", err)
-	}
-	trace.RegisterExporter(exporter)
-
-	pExporter, err := prometheus.NewExporter(prometheus.Options{})
-	if err != nil {
-		log.Fatalf("Could not initialize prometheus exporter: %s", err)
-	}
-	view.RegisterExporter(pExporter)
-
-	go func() {
-		http.Handle("/metrics", pExporter)
-		log.Fatal(http.ListenAndServe(":9999", nil))
-	}()
-
-	// For demo purposes
-	trace.ApplyConfig(trace.Config{DefaultSampler: trace.AlwaysSample()})
-
-	if err := view.Register(ocgrpc.DefaultServerViews...); err != nil {
-		log.Fatalf("Could not register views: %s", err)
-	}
-
-	lis, err := net.Listen("tcp", *listenOn)
-	if err != nil {
-		log.Fatalf("Failed to listen: %v", err)
-	}
-
-	s := &Server{
-		storage: &LocalStorage{dir: *dataDir},
+		return fmt.Errorf("failed to listen: %v", err)
 	}
 
 	log.Println("Starting server ...")
 	srv := grpc.NewServer(grpc.StatsHandler(&ocgrpc.ServerHandler{}))
-	pwnedpasswords.RegisterPwnedPasswordsServer(srv, s)
+
+	s.init(srv)
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
@@ -151,7 +133,73 @@ func main() {
 		srv.GracefulStop()
 	}()
 
-	if err := srv.Serve(lis); err != nil {
+	s.started = true
+
+	go func() {
+		log.Fatal(http.ListenAndServe(":6060", nil))
+	}()
+
+	return srv.Serve(lis)
+}
+
+func (s *GrpcServer) setUpMonitoring() error {
+	var flushers []monitoring.FlushFunc
+
+	flushJaeger, err := monitoring.RegisterJaegerExporter(*jaegerEndpoint, s.name)
+	if err != nil {
+		return err
+	}
+	flushers = append(flushers, flushJaeger)
+
+	flushPrometheus, err := monitoring.RegisterPrometheusExporter()
+	if err != nil {
+		return err
+	}
+	flushers = append(flushers, flushPrometheus)
+
+	if err := view.Register(ocgrpc.DefaultServerViews...); err != nil {
+		return fmt.Errorf("registering grpc views: %s", err)
+	}
+
+	s.flusher = monitoring.CombineFlushFunc(flushers...)
+
+	return nil
+}
+
+func (s *GrpcServer) Stop() error {
+	if !s.started {
+		return nil
+	}
+
+	if s.flusher != nil {
+		if err := s.flusher(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func main() {
+	flag.Parse()
+
+	if *listenOn == "" || *dataDir == "" {
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	// For demo purposes
+	trace.ApplyConfig(trace.Config{DefaultSampler: trace.AlwaysSample()})
+
+	s := NewGrpcServer(*listenOn, "pwned-passwords", func(srv *grpc.Server) {
+		s := &Server{
+			storage: &LocalStorage{dir: *dataDir},
+		}
+		pwnedpasswords.RegisterPwnedPasswordsServer(srv, s)
+	})
+	defer s.Stop()
+
+	if err := s.Start(); err != nil {
 		log.Fatal(err)
 	}
 }

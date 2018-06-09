@@ -5,15 +5,13 @@ import (
 	"flag"
 	"log"
 	"os"
-	"sync"
 	"time"
 
+	"fmt"
+
 	"github.com/arjantop/pwned-passwords/client"
+	"github.com/arjantop/pwned-passwords/internal/monitoring"
 	"github.com/arjantop/pwned-passwords/pwnedpasswords"
-	prom "github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/push"
-	"go.opencensus.io/exporter/jaeger"
-	"go.opencensus.io/exporter/prometheus"
 	"go.opencensus.io/plugin/ocgrpc"
 	"go.opencensus.io/stats/view"
 	"go.opencensus.io/trace"
@@ -26,6 +24,24 @@ var (
 	jaegerEndpoint = flag.String("jaegerEndpoint", "", "Endpoint of jaeger tracing")
 )
 
+func setUpMonitoring(serviceName string) (monitoring.FlushFunc, error) {
+	flushJaeger, err := monitoring.RegisterJaegerExporter(*jaegerEndpoint, serviceName)
+	if err != nil {
+		return nil, err
+	}
+
+	flushPrometheus, err := monitoring.RegisterJobPrometheusExporter(serviceName, *promGateway)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := view.Register(ocgrpc.DefaultClientViews...); err != nil {
+		return nil, fmt.Errorf("registering grpc views: %s", err)
+	}
+
+	return monitoring.CombineFlushFunc(flushJaeger, flushPrometheus), nil
+}
+
 func main() {
 	flag.Parse()
 
@@ -36,46 +52,15 @@ func main() {
 
 	password := flag.Arg(0)
 
-	exporter, err := jaeger.NewExporter(jaeger.Options{
-		AgentEndpoint: *jaegerEndpoint,
-		ServiceName:   "pwned-passwords-client",
-	})
+	flush, err := setUpMonitoring("pwned-passwords-client")
 	if err != nil {
-		log.Fatalf("Could not initialize jaeger exporter: %s", err)
-	}
-	trace.RegisterExporter(exporter)
-
-	registry := prom.NewRegistry()
-	promExporter, err := prometheus.NewExporter(prometheus.Options{
-		Registry: registry,
-		OnError: func(err error) {
-			log.Println(err)
-		},
-	})
-	if err != nil {
-		log.Fatalf("Could not initialize prometheus exporter: %s", err)
-	}
-	view.RegisterExporter(promExporter)
-
-	var once sync.Once
-	flush := func() {
-		once.Do(func() {
-			if exporter != nil {
-				log.Println("Flushing stats ...")
-				exporter.Flush()
-			}
-
-			view.SetReportingPeriod(100 * time.Millisecond)
-			log.Println("Flushing prometheus stats ...")
-			time.Sleep(time.Second)
-			if err := push.FromGatherer("pwned-passwords-client", nil, *promGateway, registry); err != nil {
-				log.Printf("Could not flush stats to prometheus: %s", err)
-			}
-		})
+		log.Fatalf("Failed to set up monitoring: %s", err)
 	}
 
 	defer func() {
-		flush()
+		if err := flush(); err != nil {
+			log.Printf("Could not flush: %s", err)
+		}
 	}()
 
 	// Register the view to collect gRPC client stats.

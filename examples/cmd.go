@@ -3,11 +3,9 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"os"
-	"time"
-
-	"fmt"
 
 	"github.com/arjantop/pwned-passwords/client"
 	"github.com/arjantop/pwned-passwords/internal/monitoring"
@@ -45,12 +43,12 @@ func setUpMonitoring(serviceName string) (monitoring.FlushFunc, error) {
 func main() {
 	flag.Parse()
 
-	if *serverAddr == "" || flag.NArg() != 1 {
+	if *serverAddr == "" || flag.NArg() < 1 {
 		flag.Usage()
 		os.Exit(1)
 	}
 
-	password := flag.Arg(0)
+	passwords := flag.Args()
 
 	flush, err := setUpMonitoring("pwned-passwords-client")
 	if err != nil {
@@ -81,19 +79,20 @@ func main() {
 		C: pwnedpasswords.NewPwnedPasswordsClient(conn),
 	}
 
-	pwned, err := c.IsPasswordPwned(context.Background(), password)
-	if err != nil {
-		log.Printf("Pwned password call failed: %s", err)
-		return
-	}
+	ctx, span := trace.StartSpan(context.Background(), "Cmd")
+	defer span.End()
 
-	time.Sleep(1 * time.Second)
+	for _, password := range passwords {
+		pwned, err := c.IsPasswordPwned(ctx, password)
+		if err != nil {
+			log.Printf("Pwned password call failed: %s", err)
+			return
+		}
 
-	if pwned {
-		log.Println("The password has been pwned")
-		flush()
-		os.Exit(1)
-	} else {
-		log.Println("The password has not been pwned yet")
+		if pwned {
+			log.Println("The password has been pwned")
+		} else {
+			log.Println("The password has not been pwned yet")
+		}
 	}
 }

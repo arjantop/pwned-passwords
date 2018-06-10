@@ -161,7 +161,7 @@ func main() {
 
 	s := NewGrpcServer(*listenOn, "pwned-passwords", func(srv *grpc.Server) {
 		s := &Server{
-			storage: &storage.Local{Dir: *dataDir},
+			storage: &storage.RealStorage{Backend: &storage.LocalBackend{Dir: *dataDir}},
 		}
 		pwnedpasswords.RegisterPwnedPasswordsServer(srv, s)
 	})

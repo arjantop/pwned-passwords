@@ -1,14 +1,16 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 
+	"context"
+
 	"github.com/arjantop/pwned-passwords/client"
 	"github.com/arjantop/pwned-passwords/internal/monitoring"
+	"github.com/arjantop/pwned-passwords/internal/tracing"
 	"github.com/arjantop/pwned-passwords/pwnedpasswords"
 	"go.opencensus.io/plugin/ocgrpc"
 	"go.opencensus.io/stats/view"
@@ -86,6 +88,7 @@ func main() {
 		pwned, err := c.IsPasswordPwned(ctx, password)
 		if err != nil {
 			log.Printf("Pwned password call failed: %s", err)
+			tracing.RecordError(span, err)
 			return
 		}
 

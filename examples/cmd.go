@@ -1,17 +1,16 @@
 package main
 
 import (
+	"context"
 	"flag"
-	"fmt"
 	"log"
 	"os"
-
-	"context"
 
 	"github.com/arjantop/pwned-passwords/client"
 	"github.com/arjantop/pwned-passwords/internal/monitoring"
 	"github.com/arjantop/pwned-passwords/internal/tracing"
 	"github.com/arjantop/pwned-passwords/pwnedpasswords"
+	"github.com/pkg/errors"
 	"go.opencensus.io/plugin/ocgrpc"
 	"go.opencensus.io/stats/view"
 	"go.opencensus.io/trace"
@@ -25,9 +24,15 @@ var (
 )
 
 func setUpMonitoring(serviceName string) (monitoring.FlushFunc, error) {
-	flushJaeger, err := monitoring.RegisterJaegerExporter(*jaegerEndpoint, serviceName)
-	if err != nil {
-		return nil, err
+	var flushers []monitoring.FlushFunc
+
+	if *jaegerEndpoint != "" {
+		flushJaeger, err := monitoring.RegisterJaegerExporter(*jaegerEndpoint, serviceName)
+		if err != nil {
+			return nil, err
+		}
+
+		flushers = append(flushers, flushJaeger)
 	}
 
 	flushPrometheus, err := monitoring.RegisterJobPrometheusExporter(serviceName, *promGateway)
@@ -35,11 +40,13 @@ func setUpMonitoring(serviceName string) (monitoring.FlushFunc, error) {
 		return nil, err
 	}
 
+	flushers = append(flushers, flushPrometheus)
+
 	if err := view.Register(ocgrpc.DefaultClientViews...); err != nil {
-		return nil, fmt.Errorf("registering grpc views: %s", err)
+		return nil, errors.WithMessage(err, "registering grpc views faield")
 	}
 
-	return monitoring.CombineFlushFunc(flushJaeger, flushPrometheus), nil
+	return monitoring.CombineFlushFunc(flushers...), nil
 }
 
 func main() {
@@ -98,4 +105,5 @@ func main() {
 			log.Println("The password has not been pwned yet")
 		}
 	}
+
 }

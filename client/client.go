@@ -5,10 +5,10 @@ import (
 	"crypto/sha1"
 	"crypto/subtle"
 	"encoding/hex"
-	"fmt"
 	"io"
 
 	"github.com/arjantop/pwned-passwords/pwnedpasswords"
+	"github.com/pkg/errors"
 )
 
 type Client struct {
@@ -24,10 +24,11 @@ func (c *Client) IsPasswordPwned(ctx context.Context, password string) (bool, er
 		HashPrefix: prefix,
 	})
 	if err != nil {
-		return false, fmt.Errorf("call failed: %s", err)
+		return false, errors.WithMessage(err, "call failed")
 	}
 
 	// Always receive and compare all hashes so we do not leak any timing information to the server
+	// by closing the connection early.
 	var matchFound bool
 	for {
 		h, err := r.Recv()
@@ -35,9 +36,9 @@ func (c *Client) IsPasswordPwned(ctx context.Context, password string) (bool, er
 			break
 		}
 		if err != nil {
-			return false, fmt.Errorf("receive failed: %s", err)
+			return false, errors.WithMessage(err, "receive failed")
 		}
-		if subtle.ConstantTimeCompare(hash[2:], h.HashSuffix) == 1 {
+		if subtle.ConstantTimeCompare(hash[:], h.Hash) == 1 {
 			matchFound = true
 		}
 	}

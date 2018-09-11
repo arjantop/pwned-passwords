@@ -1,12 +1,11 @@
 package monitoring
 
 import (
-	"fmt"
 	"net/http"
-
 	"time"
 
 	"github.com/hashicorp/go-multierror"
+	"github.com/pkg/errors"
 	prom "github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"go.opencensus.io/exporter/jaeger"
@@ -36,7 +35,7 @@ func RegisterJaegerExporter(jaegerEndpoint string, serviceName string) (FlushFun
 		ServiceName:   serviceName,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("initializing jaeger exporter: %s", err)
+		return nil, errors.WithMessage(err, "initializing jaeger exporter failed")
 	}
 	trace.RegisterExporter(exporter)
 
@@ -52,12 +51,12 @@ func registerPrometheusExporterWithFlush(flush func(registry *prom.Registry) Flu
 		Registry: registry,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("initializing prometheus exporter: %s", err)
+		return nil, errors.WithMessage(err, "initializing prometheus exporter failed")
 	}
 	view.RegisterExporter(exporter)
 
 	if err := view.Register(ocgrpc.DefaultServerViews...); err != nil {
-		return nil, fmt.Errorf("registering grpc views: %s", err)
+		return nil, errors.WithMessage(err, "registering grpc views failed")
 	}
 
 	http.Handle("/metrics", exporter)
@@ -73,16 +72,16 @@ func RegisterPrometheusExporter() (FlushFunc, error) {
 	})
 }
 
-//RegisterJobPrometheusExporter flushes view stats to a prometheus gateway.
-//It should be callend only before exiting the program. Flushing has a side-effect of
-//modifying the view report period (view.SetReportingPeriod).
+// RegisterJobPrometheusExporter flushes view stats to a prometheus gateway.
+// It should be callend only before exiting the program. Flushing has a side-effect of
+// modifying the view report period (view.SetReportingPeriod).
 func RegisterJobPrometheusExporter(serviceName string, prometheusGateway string) (FlushFunc, error) {
 	return registerPrometheusExporterWithFlush(func(registry *prom.Registry) FlushFunc {
 		return func() error {
 			view.SetReportingPeriod(100 * time.Millisecond)
 			time.Sleep(time.Second)
 			if err := push.FromGatherer(serviceName, nil, prometheusGateway, registry); err != nil {
-				return fmt.Errorf("flushing stats to prometheus: %s", err)
+				return errors.WithMessage(err, "flushing stats to prometheus failed")
 			}
 			return nil
 		}

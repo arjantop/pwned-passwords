@@ -1,3 +1,4 @@
+//go:generate mockgen -source=storage.go -destination=storage_mock.go -package=storage Storage
 package storage
 
 import (
@@ -9,20 +10,27 @@ import (
 	"go.opencensus.io/trace"
 )
 
+// Backend is an interface representing the ability to get a io.ReadCloser for a
+// requested key.
+//
+// A Backend is used by Storage to request underlying data.
 type Backend interface {
+	// Read returns a io.ReadCloser for the requested key.
 	Read(ctx context.Context, key string) io.ReadCloser
 }
 
 type Storage interface {
-	Get(ctx context.Context, key string) ([][]byte, error)
+	Get(ctx context.Context, key string) (result [][]byte, err error)
 }
 
-type RealStorage struct {
+// ObjectStorage provides access to hashes based on a key from a Backend.
+type ObjectStorage struct {
 	Backend Backend
 }
 
-func (s *RealStorage) Get(ctx context.Context, key string) (result [][]byte, err error) {
-	ctx, span := trace.StartSpan(ctx, "RealStorage.Get")
+// Get return a list of hashes.
+func (s *ObjectStorage) Get(ctx context.Context, key string) (result [][]byte, err error) {
+	ctx, span := trace.StartSpan(ctx, "ObjectStorage.Get")
 	defer tracing.EndSpan(span, &err)
 
 	r := s.Backend.Read(ctx, key)

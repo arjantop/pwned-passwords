@@ -4,6 +4,7 @@ import "go.opencensus.io/trace"
 
 func EndSpan(span *trace.Span, err *error) {
 	RecordError(span, *err)
+	span.End()
 }
 
 func RecordError(span *trace.Span, err error) {

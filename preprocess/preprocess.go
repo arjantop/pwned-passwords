@@ -5,12 +5,13 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
-	"github.com/arjantop/pwned-passwords/internal/filename"
 	"io"
 	"log"
 	"os"
 	"path"
 	"strings"
+
+	"github.com/arjantop/pwned-passwords/internal/storage"
 )
 
 var outputDir = flag.String("outputDir", "", "Output directory for pre-processed files")
@@ -27,7 +28,7 @@ func (w *prefixWriter) WriteHash(hash string) error {
 	if w.currentPrefix != prefix {
 		w.currentPrefix = prefix
 
-		filePath := filename.PathFor(prefix, ".bin")
+		filePath := storage.PathFor(prefix, ".bin")
 
 		fullPath := path.Join(*outputDir, filePath)
 		err := os.MkdirAll(path.Dir(fullPath), 0755)
@@ -44,11 +45,11 @@ func (w *prefixWriter) WriteHash(hash string) error {
 
 	h, err := hex.DecodeString(hash)
 	if err != nil {
-		return fmt.Errorf("error decoding hash: %s", err)
+		return fmt.Errorf("decoding hash failed: %s", err)
 	}
 
 	if _, err := w.currentFile.Write(h); err != nil {
-		return fmt.Errorf("error writing hash: %s", err)
+		return fmt.Errorf("writing hash failed: %s", err)
 	}
 
 	return nil

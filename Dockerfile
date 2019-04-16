@@ -1,17 +1,19 @@
-FROM golang:1.10-alpine
+FROM golang:1.12-alpine
 
-RUN apk add --update openssl git && \
-    wget -O /usr/local/bin/dep https://github.com/golang/dep/releases/download/v0.3.2/dep-linux-amd64 && \
-    chmod +x /usr/local/bin/dep
-WORKDIR /go/src/github.com/arjantop/pwned-passwords/
+RUN apk add --no-cache git
+WORKDIR /app-src/
+COPY go.mod .
+COPY go.sum .
+RUN go mod download
+
 COPY . .
-RUN dep ensure
-RUN go build -o main server/server.go
+
+RUN go build -o /app-out/server server/server.go
 
 FROM alpine:latest
 
 RUN apk add --no-cache ca-certificates
-WORKDIR /root/
-COPY --from=0 /go/src/github.com/arjantop/pwned-passwords/main server
+WORKDIR /app/
+COPY --from=0 /app-out/server server
 
 ENTRYPOINT ["./server"]

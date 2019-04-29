@@ -1,4 +1,4 @@
-package grpcutils
+package grpcbase
 
 import (
 	"log"
@@ -34,7 +34,7 @@ func NewServer(listenOn string, name string, jaegerEndpoint string, init func(se
 	}
 }
 
-func (s *Server) Start() error {
+func (s *Server) StartWithClient(f func(conn *grpc.ClientConn)) error {
 	http.Handle("/debug/", http.StripPrefix("/debug", zpages.Handler))
 
 	if err := s.setUpMonitoring(); err != nil {
@@ -66,7 +66,20 @@ func (s *Server) Start() error {
 		log.Fatal(http.ListenAndServe(":6060", nil))
 	}()
 
+	if f != nil {
+		conn, err := grpc.Dial(lis.Addr().String(), grpc.WithStatsHandler(&ocgrpc.ClientHandler{}), grpc.WithInsecure())
+		if err != nil {
+			return errors.WithMessage(err, "could not dial")
+		}
+
+		f(conn)
+	}
+
 	return srv.Serve(lis)
+}
+
+func (s *Server) Start() error {
+	return s.StartWithClient(nil)
 }
 
 func (s *Server) setUpMonitoring() error {

@@ -1,12 +1,17 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
+	"net/http"
 	_ "net/http/pprof"
 	"os"
 
-	"github.com/arjantop/pwned-passwords/internal/grpcutils"
+	"github.com/arjantop/pwned-passwords/internal/grpcbase"
+
+	"github.com/grpc-ecosystem/grpc-gateway/runtime"
+
 	"github.com/arjantop/pwned-passwords/internal/storage"
 	"github.com/arjantop/pwned-passwords/pwnedpasswords"
 	"go.opencensus.io/trace"
@@ -50,6 +55,22 @@ func (s *server) ListHashesForPrefix(req *pwnedpasswords.ListRequest, resp pwned
 	return nil
 }
 
+func registerHttpServer(conn *grpc.ClientConn) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mux := runtime.NewServeMux()
+	if err := pwnedpasswords.RegisterPwnedPasswordsHandler(ctx, mux, conn); err != nil {
+		log.Fatal(err)
+	}
+
+	go func() {
+		if err := http.ListenAndServe(":8990", mux); err != nil {
+			log.Fatal(err)
+		}
+	}()
+}
+
 func main() {
 	flag.Parse()
 
@@ -61,7 +82,7 @@ func main() {
 	// For demo purposes
 	trace.ApplyConfig(trace.Config{DefaultSampler: trace.AlwaysSample()})
 
-	s := grpcutils.NewServer(*listenOn, "pwned-passwords", *jaegerEndpoint, func(srv *grpc.Server) {
+	s := grpcbase.NewServer(*listenOn, "pwned-passwords", *jaegerEndpoint, func(srv *grpc.Server) {
 		s := &server{
 			storage: storage.NewLocalStorage(*dataDir),
 		}
@@ -69,7 +90,7 @@ func main() {
 	})
 	defer s.Stop()
 
-	if err := s.Start(); err != nil {
+	if err := s.StartWithClient(registerHttpServer); err != nil {
 		log.Fatal(err)
 	}
 }

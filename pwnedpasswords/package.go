@@ -1,3 +1,3 @@
-//go:generate protoc --go_out=plugins=grpc:. pwned_passwords.proto
-
 package pwnedpasswords
+
+//go:generate bash ../proto_gen.sh
